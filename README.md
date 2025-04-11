@@ -135,3 +135,64 @@ space_occupancy/
 - Add **logging** and debugging support (e.g., timestamps, feature match quality).
 
 Would you like me to generate a `requirements.txt` and a sample config file (like `camera_intrinsics.yaml`) to start from?
+
+
+For the following photo we follow the steps below to extract useful information for the algorithm. Our target is the red kia sportage.
+
+![Red Kia Sportage](/data/sample_frames/red_kia_sportage/frame_175.jpg)
+
+---
+
+## ✅ **1. Assign Real-World Coordinates to Key Points**
+Using the **physical dimensions**:
+- Rear lights are symmetric, so choose two reference points on them — e.g., centers of each light.
+- Approximate the **rear light distance** from the specs:
+  - If rear track is 1636 mm and light centers are slightly inset, estimate ~1500 mm between rear light centers.
+- Assume the rear light height is roughly **halfway up the car**, say ~800–900 mm from the ground.
+- Car **length = 4480 mm**, so the **rear bumper to front bumper span** is known if needed.
+
+---
+
+## 🧠 **2. Extract Corresponding Image Points**
+From the uploaded image:
+- Identify and annotate pixel coordinates of:
+  - Rear-left light center → L
+  - Rear-right light center → R
+  - Bottom of wheels (for ground contact)
+  - Roofline midpoint (for vertical context)
+- Optional: license plate corners or edges of the bumper for extra symmetry cues.
+
+---
+
+## 🔁 **3. Back-Project to 3D**
+Assuming you have the **camera calibration matrix K**, for each image point \( p \) (in homogeneous coordinates):
+```math
+\text{Ray direction} = K^{-1} p
+```
+You get the **3D ray** from the camera through the light points. You need at least **one depth estimate** to localize them in 3D — here's where your prior model dimensions help.
+
+---
+
+## 📐 **4. Estimate the Ground Plane (π)**
+Using:
+- The 3D directions of the rear lights (from rays)
+- Their known real-world separation
+- The assumption that the rear lights lie on a vertical plane
+You can:
+- Estimate π using triangulation (for car translating case), or
+- Use the **vanishing points** method from the slides (Space Occupancy PDF)
+
+---
+
+## 🔍 **5. Compute Space Occupied**
+Once π and the 3D rear points are known:
+- Reconstruct a rectangle or quadrilateral approximating the vehicle's footprint.
+- This is your **occupied space on the road** in each frame.
+
+---
+
+## ⚙️ Optional Enhancements
+- Use **Symmetric Feature Localization** from the slides for better pose estimation under low perspective.
+- Use multiple frames to track light motion and deduce forward/curved motion (as outlined in the “Car translating” vs “Car steering” cases).
+
+---
