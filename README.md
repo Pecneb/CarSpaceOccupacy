@@ -196,3 +196,15 @@ Once π and the 3D rear points are known:
 - Use multiple frames to track light motion and deduce forward/curved motion (as outlined in the “Car translating” vs “Car steering” cases).
 
 ---
+
+## Features to track (others)
+
+- Rendszamtabla
+- Kerekek
+
+## Andras modszer
+
+- Alapigazsagok modellezese (Blender)
+- Yolo -> BBox dataset
+  - Feature vector: 4-5 Bbox params
+- Josolt parameterek: Sebesseg, Gyorsulas, Kamerahoz valo mozgasi irany, kamera pozicio
