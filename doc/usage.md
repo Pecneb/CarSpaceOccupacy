@@ -51,12 +51,32 @@ python plot_tracked_trajectory.py --trajectory_file tracked_rear_lights.npy --ou
 
 ---
 
+## Step 4: Analyze Motion Type (Translation or Steering)
+
+### Script: `analyze_motion.py`
+
+**Usage:**
+```bash
+python analyze_motion.py --selected_points_file selected_points.npy --K_file camera_intrinsics.yaml
+```
+
+**Description:**
+- Load the selected 4 points (L1, R1, L2, R2).
+- Load the camera intrinsic matrix from the OpenCV-style YAML file.
+- Compute the light segments (lines h and k).
+- Calculate vanishing points (Vx and Vy) following the professor's method.
+- Analyze the cosine of the angle between the 3D directions.
+- Determine if the car is translating forward or steering.
+- Optionally plot the light segments and vanishing points for visualization.
+
+---
+
 # Files and Artifacts
 
 - `tracked_rear_lights.npy` : Tracked positions of rear lights across frames.
 - `selected_points.npy` : 4 selected points (L1, R1, L2, R2) for reconstruction.
+- `camera_intrinsics.yaml` : Camera intrinsic matrix saved using OpenCV FileStorage.
 
 # Next Steps
 
-Proceed to geometric processing: calculate vanishing points, decide translation vs steering, estimate plane π.
-
+Proceed to reconstruct the true 3D trajectory using real-world distance between the rear lights and the theory of cosines.
