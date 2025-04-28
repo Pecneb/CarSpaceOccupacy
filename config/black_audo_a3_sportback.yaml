@@ -1,0 +1,12 @@
+brand: "Audi"
+model: "A3 Sportback"
+version: "5-door"
+dimensions:
+  length_mm: 4450    # Approximation from 4757, adjusted because A3 Sportback usually around 4450–4500 mm
+  width_mm: 1816
+  height_mm: 1430
+wheelbase_mm: 2630   # Smaller end of the range 2630–2820 mm
+track_width_mm:
+  front: 1560        # Approximate (typical front track width for A3 Sportback)
+  rear: 1540         # Approximate (typical rear track width for A3 Sportback)
+ground_clearance_mm: 140  # Approximate ground clearance for Audi A3 (sporty hatchbacks are low)
