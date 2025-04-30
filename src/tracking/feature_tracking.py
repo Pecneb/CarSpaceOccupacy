@@ -108,6 +108,7 @@ def track_lights(
 
     # --- Save or process trajectories ---
     trajectories = np.array(trajectories)  # shape: (2, num_frames, 2)
+    trajectories[:, :, 1] = frame.shape[0] - trajectories[:, :, 1]
 
     print("Tracking finished.")
     print("Trajectories shape:", trajectories.shape)
