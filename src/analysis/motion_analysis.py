@@ -95,8 +95,8 @@ def analyze_motion(selected_points_file, K_file=None, plot_result=True):
         ax.plot(Vx[0], Vx[1], "rx", markersize=10, label="Vx")
         ax.plot(Vy[0], Vy[1], "bx", markersize=10, label="Vy")
         x_vals = np.linspace(
-            -960, 2 * 1920, 100
-        )  # Assuming a 1920x1080 image resolution
+            np.min([Vx[0], Vy[0]]), np.max([Vx[0], Vy[0]])
+        )  # Take min and max values of vanishing points, so we can see both on the plot.
         y_vals_Vx_h = -(Vx_h[0] * x_vals + Vx_h[2]) / Vx_h[1]
         y_vals_Vx_k = -(Vx_k[0] * x_vals + Vx_k[2]) / Vx_k[1]
         y_vals_Vy_h = -(Vy_h[0] * x_vals + Vy_h[2]) / Vy_h[1]
