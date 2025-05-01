@@ -1,8 +1,97 @@
+from typing import Tuple, Union
 import numpy as np
 import fire
 import matplotlib.pyplot as plt
 import cv2
 from mpl_toolkits.mplot3d import Axes3D
+
+
+def compute_vanising_points_Vx_and_Vy(
+    l1: np.ndarray,
+    r1: np.ndarray,
+    l2: np.ndarray,
+    r2: np.ndarray,
+    intermediate_results: bool = False,
+) -> Union[
+    Tuple[np.ndarray, np.ndarray],
+    Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray],
+]:
+    """
+    Compute the vanishing points Vx and Vy from the given homogeneous coordinates
+    of the left and right rear lights captured in two video frames.
+    The vanishing points are calculated based on the intersection of lines formed
+    by the given points in homogeneous coordinates.
+    Args:
+        l1 (np.ndarray): Homogeneous coordinates of the left rear light in frame 1.
+        r1 (np.ndarray): Homogeneous coordinates of the right rear light in frame 1.
+        l2 (np.ndarray): Homogeneous coordinates of the left rear light in frame 2.
+        r2 (np.ndarray): Homogeneous coordinates of the right rear light in frame 2.
+        intermediate_results (bool): Set to True if want the function to return intermediate results h, k rays.
+    Returns:
+        Tuple of Vx, Vy as numpy arrays
+        or
+        Tuple of Vx, Vy, Vx_h, Vx_k, Vy_h, Vy_k if intermediate_results argument is set to True
+    """
+    # Compute lines of vanishing point Vx
+    Vx_h = np.cross(l1, r1)
+    Vx_k = np.cross(l2, r2)
+
+    # Compute lines of vanishing point Vy
+    Vy_h = np.cross(l1, l2)
+    Vy_k = np.cross(r1, r2)
+
+    # Compute vanishing points
+    Vx = np.cross(Vx_h, Vx_k)
+    Vy = np.cross(Vy_h, Vy_k)
+    if intermediate_results:
+        return Vx, Vy, Vx_h, Vx_k, Vy_h, Vy_k
+    return Vx, Vy
+
+
+def to_homogeneous(p: np.ndarray) -> np.ndarray:
+    """Convert Euclidean coordinate to Homogeneous coordinate
+
+    Args:
+        p (np.ndarray): Euclidean coordinate
+
+    Returns:
+        np.ndarray: Homogeneous coordinate
+    """
+    return np.array([p[0], p[1], 1.0])
+
+
+def computer_vanishing_line(p: np.ndarray, q: np.ndarray) -> np.ndarray:
+    """Compute the vanishing line from vanishing points p and q.
+
+    Args:
+        p (np.ndarray): Vanishing point 1
+        q (np.ndarray): Vanishing points 2
+
+    Returns:
+        np.ndarray: Vanishing line
+    """
+    return np.cross(p, q)
+
+
+def backproject_coordinate(x: np.ndarray, K: np.ndarray) -> np.ndarray:
+    """Backproject coordinate p with intrinsic matrix K
+
+    Args:
+        p (np.ndarray): Homogeneous coordinate
+        K (np.ndarray): Intrinsic parameters matrix
+        batch (bool): Batch toggle
+
+    Returns:
+        np.ndarray: Backprojected coordinate or coordinates if batch toggle is True
+    """
+    K_inv = np.linalg.inv(K)
+    if len(x.shape) == 2:
+        Y = np.empty_like(x)
+        for i in range(x.shape[0]):
+            Y[i] = np.dot(K_inv, x[i])
+        return Y
+    else:
+        return np.dot(K_inv, x)
 
 
 def analyze_motion(selected_points_file, K_file=None, plot_result=True):
@@ -28,10 +117,6 @@ def analyze_motion(selected_points_file, K_file=None, plot_result=True):
     else:
         K = np.eye(3)
 
-    # Homogenize points
-    def to_homogeneous(p):
-        return np.array([p[0], p[1], 1.0])
-
     L1h = to_homogeneous(L1)
     R1h = to_homogeneous(R1)
     L2h = to_homogeneous(L2)
@@ -43,17 +128,9 @@ def analyze_motion(selected_points_file, K_file=None, plot_result=True):
     print(f"L2h: {L2h}")
     print(f"R2h: {R2h}")
 
-    # Compute lines of vanishing point Vx
-    Vx_h = np.cross(L1h, R1h)
-    Vx_k = np.cross(L2h, R2h)
-
-    # Compute lines of vanishing point Vy
-    Vy_h = np.cross(L1h, L2h)
-    Vy_k = np.cross(R1h, R2h)
-
-    # Compute vanishing points
-    Vx = np.cross(Vx_h, Vx_k)
-    Vy = np.cross(Vy_h, Vy_k)
+    Vx, Vy, Vx_h, Vx_k, Vy_h, Vy_k = compute_vanising_points_Vx_and_Vy(
+        L1h, R1h, L2h, R2h, True
+    )
 
     # Normalize vanishing points
     Vx /= Vx[2]
@@ -63,14 +140,11 @@ def analyze_motion(selected_points_file, K_file=None, plot_result=True):
     print(f"Vanishing Point Vy (intersection of L1-L2): {Vy}")
     print(f"Vanishing Point Vx (intersection of R1-R2): {Vx}")
 
-    # Calculate vanishing line l_inf
+    # Compute vanishing line
+    l_inf = computer_vanishing_line(Vx, Vy)
 
-    l_inf = np.cross(Vx, Vy)
-
-    # Backproject into 3D directions using K inverse
-    K_inv = np.linalg.inv(K)
-    Vy_3D = K_inv @ Vy
-    Vx_3D = K_inv @ Vx
+    # Backproject vanishing coordinates and line in 3D
+    Vy_3D, Vx_3D, l_inf_3D = backproject_coordinate(np.stack([Vy, Vx, l_inf]), K)
 
     print(f"3D Coordinates of Vy: {Vy_3D}")
     print(f"3D Coordinates of Vx: {Vx_3D}")
@@ -127,12 +201,19 @@ def analyze_motion(selected_points_file, K_file=None, plot_result=True):
         )
 
         # Backproject l_inf into 3D
-        l_inf_3D = K_inv @ l_inf
         l_inf_3D /= np.linalg.norm(l_inf_3D)  # Normalize for visualization
 
         # Plot l_inf_3D
         ax_3d.quiver(
-            0, 0, 0, l_inf_3D[0], l_inf_3D[1], l_inf_3D[2], color="g", label="l_inf_3D", linewidth=2
+            0,
+            0,
+            0,
+            l_inf_3D[0],
+            l_inf_3D[1],
+            l_inf_3D[2],
+            color="g",
+            label="l_inf_3D",
+            linewidth=2,
         )
 
         # Set plot limits for better visualization

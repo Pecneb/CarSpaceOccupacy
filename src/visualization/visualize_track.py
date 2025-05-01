@@ -26,6 +26,7 @@ def plot_trajectories(npy_path, save_path=None):
     plt.title('Tracked Rear Lights Trajectories')
     plt.legend()
     plt.grid(True)
+    plt.gca().invert_yaxis()
 
     if save_path:
         plt.savefig(save_path)
