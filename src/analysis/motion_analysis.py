@@ -45,12 +45,36 @@ class MotionAnalysis:
             return Vx, Vy, Vx_h, Vx_k, Vy_h, Vy_k
         return Vx, Vy
 
-    def backproject_coordinate(self, x: np.ndarray) -> np.ndarray:
-        """Backproject coordinate with intrinsic matrix K."""
+    def backproject_point_to_3D_ray(self, v_2d: np.ndarray) -> np.ndarray:
+        """
+        Backproject a 2D image point (e.g. vanishing point) to a 3D ray using K^{-1}.
+
+        Args:
+            v_2d (array): Homogeneous image point [x, y, 1]
+            K (array): 3x3 camera intrinsic matrix
+
+        Returns:
+            ray_3d (array): 3D direction vector from camera center (not scaled)
+        """
         K_inv = np.linalg.inv(self.K)
-        if len(x.shape) == 2:
-            return np.dot(K_inv, x.T).T
-        return np.dot(K_inv, x)
+        if len(v_2d.shape) == 2:
+            return np.dot(K_inv, v_2d.T).T
+        return np.dot(K_inv, v_2d)
+
+    def backproject_line_to_plane_normal(self, l_2d: np.ndarray) -> np.ndarray:
+        """
+        Backproject a 2D image line (e.g. vanishing line) to a 3D plane normal using K^T.
+
+        Args:
+            l_2d (array): Homogeneous image line [a, b, c]
+            K (array): 3x3 camera intrinsic matrix
+
+        Returns:
+            n_3d (array): 3D plane normal vector (not necessarily unit norm)
+        """
+        l_h = np.array(l_2d)
+        n = self.K.T @ l_h
+        return n / np.linalg.norm(n)
 
     def analyze_motion(self, plot_result: bool = True):
         """
@@ -74,14 +98,19 @@ class MotionAnalysis:
         # Compute vanishing line
         l_inf = np.cross(Vx, Vy)
 
+        print(f"K matrix: {self.K}")
+
         # Backproject vanishing points and line into 3D
-        Vy_3D, Vx_3D, l_inf_3D = self.backproject_coordinate(np.stack([Vy, Vx, l_inf]))
+        Vy_3D, Vx_3D = self.backproject_point_to_3D_ray(np.stack([Vy, Vx]))
+        l_inf_3D = self.backproject_line_to_plane_normal(l_inf)
 
         # Analyze motion type
         dot_product = np.dot(Vx_3D[:2], Vy_3D[:2])
         angle_cos = dot_product / (
             np.linalg.norm(Vx_3D[:2]) * np.linalg.norm(Vy_3D[:2])
         )
+        print(f"Dot product of Vx_3D[{Vx_3D}] @ Vy_3D[{Vy_3D}]: {dot_product}")
+        print(f"Angle of two vectors: {np.degrees(np.cosh(np.abs(angle_cos)))}")
         if abs(angle_cos) < 0.1:
             print("\nResult: The car is TRANSLATING FORWARD.")
         else:
