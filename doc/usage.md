@@ -57,7 +57,7 @@ python plot_tracked_trajectory.py --trajectory_file tracked_rear_lights.npy --ou
 
 **Usage:**
 ```bash
-python motion_analysis.py analyze_motion --selected_points_file=points.npy --K_file=intrinsics.yaml --plot_result=True
+python3 src/analysis/motion_analysis.py --selected_points_file=data/tracks/selected_points.npy -K=config/camera_intrinsics.yaml analyze_motion
 ```
 
 **Description:**
@@ -70,6 +70,23 @@ python motion_analysis.py analyze_motion --selected_points_file=points.npy --K_f
 - Optionally plot the light segments and vanishing points for visualization.
 
 ---
+
+## Step 5: Compute the distance of camera from rear lights
+
+### Script `analyze_motion.py`
+
+**Usage:**
+```bash
+python motion_analysis.py --selected_points_file=data/tracks/selected_points.npy --K_file=config/camera_intrinsics.yaml --car_params_file=config/black_audi_a3_sportback.yaml camera_to_plane_distance
+```
+
+**Description:**
+- Load the selected 4 points from the npy file.
+- We only need 1 pair of lights now.
+- Load the yaml file containing the car params.
+- Compute the distance using the theorem of cosines.
+- Print the distance in meters.
+- Plot the triangle in 3D.
 
 # Files and Artifacts
 
