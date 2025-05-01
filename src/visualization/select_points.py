@@ -36,6 +36,7 @@ def manual_select_frames(trajectory_file, output_file=None, plot_selected=True):
     ax.set_xlabel('X (pixels)')
     ax.set_ylabel('Y (pixels)')
     ax.legend()
+    ax.invert_yaxis()
     cid = fig.canvas.mpl_connect('button_press_event', onclick)
     plt.show()
 
@@ -70,6 +71,7 @@ def manual_select_frames(trajectory_file, output_file=None, plot_selected=True):
                 ax.set_xlabel('X (pixels)')
                 ax.set_ylabel('Y (pixels)')
                 ax.legend()
+                ax.invert_yaxis()
                 plt.show()
 
         return selected_frames
