@@ -57,7 +57,7 @@ python plot_tracked_trajectory.py --trajectory_file tracked_rear_lights.npy --ou
 
 **Usage:**
 ```bash
-python analyze_motion.py --selected_points_file selected_points.npy --K_file camera_intrinsics.yaml
+python motion_analysis.py analyze_motion --selected_points_file=points.npy --K_file=intrinsics.yaml --plot_result=True
 ```
 
 **Description:**
