@@ -208,3 +208,5 @@ Once π and the 3D rear points are known:
 - Yolo -> BBox dataset
   - Feature vector: 4-5 Bbox params
 - Josolt parameterek: Sebesseg, Gyorsulas, Kamerahoz valo mozgasi irany, kamera pozicio
+
+Find the plane with the K mat by the line at the infinity, camera viewing rays
