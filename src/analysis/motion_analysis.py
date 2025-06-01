@@ -1,3 +1,5 @@
+import logging
+from logging import getLogger, Logger
 from typing import Tuple, Union, Dict, Any, Optional
 import numpy as np
 import fire
@@ -13,32 +15,76 @@ class MotionAnalysis:
         selected_points_file: str,
         K_file: str,
         car_params_file: Optional[str] = None,
+        tracked_features: str = "rear_lights",
+        debug: bool = False,
     ):
-        """
-        Initialize the MotionAnalysis class with common arguments.
+        """Initializes the motion analysis object with the required configuration files and parameters.
 
         Args:
-            selected_points_file (str): Path to the selected points (L1, R1, L2, R2).
-            K_file (str, optional): Path to camera intrinsic matrix (YAML file saved by OpenCV FileStorage). If None, assumes identity.
+            selected_points_file (str): Path to the file containing selected points for analysis.
+            K_file (str): Path to the file containing the camera intrinsic matrix.
+            car_params_file (Optional[str], optional): Path to the file containing car parameters. Defaults to None.
+            tracked_features (str, optional): The type of features to track ["rear_lights", "license_plate"]. Defaults to "rear_lights".
         """
+        allowed_tracked_features = ["rear_lights", "license_plate"]
+        if tracked_features not in allowed_tracked_features:
+            raise ValueError(
+                f"tracked_features must be one of {allowed_tracked_features}"
+            )
+        self._logger = self._init_logger(debug)
         self.selected_points_file = selected_points_file
         self.K_file = K_file
-        self.K = self._load_camera_matrix()
+        self.K, self.dist_coeffs = self._load_camera_matrix()
         self.car_params_file = car_params_file
         self.car_params = self._load_car_params()
+        self.tracked_features = tracked_features
 
-    def _load_camera_matrix(self) -> np.ndarray:
-        """Load the camera intrinsic matrix from the K_file or use the identity matrix."""
-        if self.K_file:
-            fs = cv2.FileStorage(self.K_file, cv2.FILE_STORAGE_READ)
-            K = fs.getNode("K").mat()
-            fs.release()
+    def _init_logger(self, debug: bool) -> Logger:
+        logger = getLogger("MotionAnalysisLogger")
+        if debug:
+            logger.setLevel(logging.DEBUG)
+            if not logger.hasHandlers():
+                handler = logging.StreamHandler()
+                handler.setLevel(logging.DEBUG)
+                formatter = logging.Formatter("[%(levelname)s] %(name)s: %(message)s")
+                handler.setFormatter(formatter)
+                logger.addHandler(handler)
         else:
-            K = np.eye(3)
-        return K
+            logger.setLevel(logging.INFO)
+            if not logger.hasHandlers():
+                handler = logging.StreamHandler()
+                handler.setLevel(logging.INFO)
+                formatter = logging.Formatter("[%(levelname)s] %(name)s: %(message)s")
+                handler.setFormatter(formatter)
+                logger.addHandler(handler)
+        return logger
+
+    def _load_camera_matrix(self) -> Tuple[np.ndarray, np.ndarray]:
+        """Load the camera intrinsic matrix from the K_file or use the identity matrix."""
+        # if self.K_file:
+        #     fs = cv2.FileStorage(self.K_file, cv2.FILE_STORAGE_READ)
+        #     K = fs.getNode("K").mat()
+        #     fs.release()
+        # else:
+        #     K = np.eye(3)
+        # Get calibration parameters
+        # Load from file
+        data = np.load(str(self.K_file))
+
+        # Extract camera matrix and distortion coefficients
+        K = data["camera_matrix"]
+        dist_coeffs = data["dist_coeffs"]
+
+        self._logger.debug(
+            "Read and Load calibration matrices: K %s and dist_coeffs %s",
+            str(K),
+            str(dist_coeffs),
+        )
+        return K, dist_coeffs
 
     def _load_car_params(self) -> Dict[str, Any]:
         """Load YAML file containing car parameters"""
+        self._logger.debug("Loading car parameters %s", self.car_params_file)
         if self.car_params_file:
             with open(self.car_params_file) as f:
                 car_params_dict = yaml.safe_load(f)
@@ -143,6 +189,11 @@ class MotionAnalysis:
 
         L1, R1, L2, R2 = points
         L1h, R1h, L2h, R2h = map(self.to_homogeneous, [L1, R1, L2, R2])
+        self._logger.debug("Loaded coordinates:")
+        self._logger.debug("  L1: %s", L1)
+        self._logger.debug("  R1: %s", R1)
+        self._logger.debug("  L2: %s", L2)
+        self._logger.debug("  R2: %s", R2)
 
         # Compute vanishing points
         Vx, Vy, Vx_h, Vx_k, Vy_h, Vy_k = self.compute_vanishing_points(
@@ -150,11 +201,19 @@ class MotionAnalysis:
         )
         Vx /= Vx[2]
         Vy /= Vy[2]
+        self._logger.debug("Computed vanishing points:")
+        self._logger.debug("Vx (vanishing point x): %s", Vx)
+        self._logger.debug("Vy (vanishing point y): %s", Vy)
+        self._logger.debug("Intermediate results:")
+        self._logger.debug("Vx_h (L1-R1 line): %s", Vx_h)
+        self._logger.debug("Vx_k (L2-R2 line): %s", Vx_k)
+        self._logger.debug("Vy_h (L1-L2 line): %s", Vy_h)
+        self._logger.debug("Vy_k (R1-R2 line): %s", Vy_k)
 
         # Compute vanishing line
         l_inf = np.cross(Vx, Vy)
 
-        print(f"K matrix: {self.K}")
+        self._logger.info("K matrix:\n%s", np.array2string(self.K, precision=3, suppress_small=True))
 
         # Backproject vanishing points and line into 3D
         Vy_3D, Vx_3D = self.backproject_point_to_3D_ray(np.stack([Vy, Vx]))
@@ -165,12 +224,18 @@ class MotionAnalysis:
         angle_cos = dot_product / (
             np.linalg.norm(Vx_3D[:2]) * np.linalg.norm(Vy_3D[:2])
         )
-        print(f"Dot product of Vx_3D[{Vx_3D}] @ Vy_3D[{Vy_3D}]: {dot_product}")
-        print(f"Angle of two vectors: {np.degrees(np.cosh(np.abs(angle_cos)))}")
+        self._logger.info(
+            "Dot product of Vx_3D: %s @ Vy_3D: %s = %.4f",
+            np.array2string(Vx_3D, precision=3, suppress_small=True),
+            np.array2string(Vy_3D, precision=3, suppress_small=True),
+            dot_product,
+        )
+        angle_deg = np.degrees(np.arccos(np.clip(angle_cos, -1.0, 1.0)))
+        self._logger.info("Angle between Vx_3D and Vy_3D: %.2f degrees", angle_deg)
         if abs(angle_cos) < 0.1:
-            print("\nResult: The car is TRANSLATING FORWARD.")
+            self._logger.info("Result: The car is TRANSLATING FORWARD.")
         else:
-            print("\nResult: The car is STEERING (turning).")
+            self._logger.info("Result: The car is STEERING (turning).")
 
         # Plot results if requested
         if plot_result:
@@ -353,30 +418,60 @@ class MotionAnalysis:
         Args:
             plot_results (bool, optional): Plot results?. Defaults to True.
         """
+        self._logger.info("Calculating camera to plane distance...")
         # Initialize left and right rear light coordinates
         coordinates = np.load(self.selected_points_file)
-        L1, R1, _, _ = coordinates
+        L1, R1, L2, R2 = coordinates
 
         # Make the coorindates homogeneous
         L1 = np.array([L1[0], L1[1], 1])
         R1 = np.array([R1[0], R1[1], 1])
+        L2 = np.array([L2[0], L2[1], 1])
+        R2 = np.array([R2[0], R2[1], 1])
 
-        # Load car parameters and estimate rear light distance (6 cm overhand on both sides) (scale it to M instead of MM)
-        light_distance = (self.car_params["track_width_mm"]["rear"] + 2 * 60) / 1e3
+        # Coordinates
+        self._logger.debug("Loaded coordinates:")
+        self._logger.debug("L1: %s", str(L1))
+        self._logger.debug("R1: %s", str(R1))
+        self._logger.debug("L2: %s", str(L2))
+        self._logger.debug("R2: %s", str(R2))
+
+        # Calculate real world distance between trakced features
+        if self.tracked_features == "rear_lights":
+            # Load car parameters and estimate rear light distance (6 cm overhand on both sides) (scale it to M instead of MM)
+            feature_distance = (
+                self.car_params["track_width_mm"]["rear"] + 2 * 60
+            ) / 1e3
+        elif self.tracked_features == "license_plate":
+            # License plate position and parameters are uniform in Italy
+            feature_distance = 520 / 1e3
+        self._logger.debug("Calculating real life distance between adjacent features: %.2f m", feature_distance)
 
         # Backproject into 3D space
         L1_3D, R1_3D = self.backproject_point_to_3D_ray(np.stack([L1, R1]))
+        L2_3D, R2_3D = self.backproject_point_to_3D_ray(np.stack([L2, R2]))
 
         # Normalize
         L1_3D /= np.linalg.norm(L1_3D)
         R1_3D /= np.linalg.norm(R1_3D)
+        L2_3D /= np.linalg.norm(L2_3D)
+        R2_3D /= np.linalg.norm(R2_3D)
+
+        self._logger.debug("Backprojecting coordinates to 3D coordinates:")
+        self._logger.debug("L1 3D: %s", str(L1_3D))
+        self._logger.debug("R1 3D: %s", str(R1_3D))
+        self._logger.debug("L2 3D: %s", str(L2_3D))
+        self._logger.debug("R2 3D: %s", str(R2_3D))
 
         # Estimate scale
-        scale = self.estimate_camera_distance_cosine(L1_3D, R1_3D, light_distance)
-        print(f"The scale of the triangle: {scale}")
+        scale = self.estimate_camera_distance_cosine(L1_3D, R1_3D, feature_distance)
+        self._logger.info("The scale of the first triangle: %.2f", scale)
+        scale2 = self.estimate_camera_distance_cosine(L2_3D, R2_3D, feature_distance)
+        self._logger.info("The scale of the second triangle: %.2f", scale2)
 
         if plot_results:
             self._plot_cosine_triangle(L1_3D, R1_3D, scale)
+            self._plot_cosine_triangle(L2_3D, R2_3D, scale2)
 
     def _plot_cosine_triangle(
         self, ray1: np.ndarray, ray2: np.ndarray, scale: float
