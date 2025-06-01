@@ -8,7 +8,7 @@ This document summarizes the steps and script usage needed to arrive at the poin
 
 **Usage:**
 ```bash
-python track_rear_lights.py --video_path path_to_video.mp4 --output_path tracked_rear_lights.npy --start_frame 0 --display True
+python feature_tracking.py --video_path path_to_video.mp4 --output_path tracked_rear_lights.npy --start_frame 0 --display True
 ```
 
 **Description:**
@@ -25,7 +25,7 @@ python track_rear_lights.py --video_path path_to_video.mp4 --output_path tracked
 
 **Usage:**
 ```bash
-python plot_tracked_trajectory.py --trajectory_file tracked_rear_lights.npy
+python visualize_track.py --trajectory_file tracked_rear_lights.npy
 ```
 
 **Description:**
@@ -40,7 +40,7 @@ python plot_tracked_trajectory.py --trajectory_file tracked_rear_lights.npy
 
 **Usage:**
 ```bash
-python plot_tracked_trajectory.py --trajectory_file tracked_rear_lights.npy --output_file selected_points.npy
+python select_points.py --trajectory_file tracked_rear_lights.npy --output_file selected_points.npy
 ```
 
 **Description:**
