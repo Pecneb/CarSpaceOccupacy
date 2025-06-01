@@ -16,7 +16,8 @@ objpoints = []  # 3D points
 imgpoints = []  # 2D points
 
 # === Load checkerboard images ===
-images = glob.glob('calibration_images/*.jpg')  # your folder with checkerboard images
+images = glob.glob('data/calibration/*.jpg')  # your folder with checkerboard images
+print(images)
 
 for fname in images:
     img = cv2.imread(fname)
