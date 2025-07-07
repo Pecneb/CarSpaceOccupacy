@@ -1,6 +1,7 @@
 import logging
+import random
 from logging import getLogger, Logger
-from typing import Tuple, Union, Dict, Any, Optional
+from typing import Tuple, Union, Dict, Any, Optional, List
 import numpy as np
 import fire
 import matplotlib.pyplot as plt
@@ -109,6 +110,8 @@ class MotionAnalysis:
 
     def to_homogeneous(self, p: np.ndarray) -> np.ndarray:
         """Convert Euclidean coordinate to Homogeneous coordinate."""
+        if len(p.shape) == 2 and p.shape[1] == 2:
+            return np.hstack((p, np.ones(shape=(p.shape[0], 1))))
         return np.array([p[0], p[1], 1.0])
 
     def compute_vanishing_points(
@@ -147,6 +150,19 @@ class MotionAnalysis:
             return Vx, Vy, Vx_h, Vx_k, Vy_h, Vy_k
         return Vx, Vy
 
+    def compute_vanishing_points_vectorized(
+        points: np.ndarray,
+    ) -> Tuple[np.ndarray, np.ndarray]:
+        """Compute vanishing points from input tracked point pairs.
+
+        Args:
+            points (np.ndarray): numpy array of left and right tracked feature segments.
+
+        Returns:
+            Tuple[np.ndarray, np.ndarray]: a tuple containing the vanishing points.
+        """
+        vx_lines = np.array()
+
     def backproject_point_to_3D_ray(self, v_2d: np.ndarray) -> np.ndarray:
         """
         Backproject a 2D image point (e.g. vanishing point) to a 3D ray using K^{-1}.
@@ -178,42 +194,107 @@ class MotionAnalysis:
         n = self.K.T @ l_h
         return n / np.linalg.norm(n)
 
+    def ransac_vanishing_point(
+        self, lines: List[np.ndarray], threshold: float = 0.5, iterations: int = 1000
+    ) -> Tuple[np.ndarray, np.ndarray]:
+        """
+        Estimate vanishing point from noisy line segments using RANSAC.
+
+        Args:
+            lines (List[np.ndarray]): List of 2D homogeneous line vectors [a, b, c]
+            threshold (float): Distance threshold for inliers (in pixels)
+            iterations (int): Number of RANSAC iterations
+
+        Returns:
+            best_vp (np.ndarray): Homogeneous coordinates of vanishing point
+            best_inliers (List[int]): Indices of inlier lines
+        """
+        best_vp = None
+        best_inliers = []
+
+        for _ in range(iterations):
+            # Randomly sample 2 lines
+            sample = random.sample(lines, 2)
+            l1, l2 = sample
+            vp_candidate = np.cross(l1, l2)
+            if np.abs(vp_candidate[2]) < 1e-6:
+                continue
+            vp_candidate /= vp_candidate[2]
+
+            inliers = []
+            for i, line in enumerate(lines):
+                # Point-line distance
+                d = np.abs(np.dot(line, vp_candidate)) / np.linalg.norm(line[:2])
+                if d < threshold:
+                    inliers.append(i)
+
+            if len(inliers) > len(best_inliers):
+                best_inliers = inliers
+                best_vp = vp_candidate
+
+        return np.array(best_vp), np.array(best_inliers)
+
+    def normalize_lines(self, lines: np.ndarray) -> np.ndarray:
+        return lines / np.linalg.norm(lines[:, :2], axis=1, keepdims=True)
+
     def analyze_motion(self, plot_result: bool = True):
         """
         Analyze motion type (translation or steering) from selected rear light points.
         """
         # Load selected points
-        points = np.load(self.selected_points_file)  # shape (4, 2)
-        if points.shape != (4, 2):
-            raise ValueError("Selected points must have shape (4, 2)")
+        points = np.load(self.selected_points_file)
+        if points.ndim != 3 or points.shape[1:] != (2, 2):
+            raise ValueError("Selected points must have shape (n, 2, 2)")
+        L, R = points[:, 0], points[:, 1]
 
-        L1, R1, L2, R2 = points
-        L1h, R1h, L2h, R2h = map(self.to_homogeneous, [L1, R1, L2, R2])
+        # L1, R1, L2, R2 = points
+        # L1h, R1h, L2h, R2h = map(self.to_homogeneous, [L1, R1, L2, R2])
+        L_h = self.to_homogeneous(L)
+        R_h = self.to_homogeneous(R)
+
         self._logger.debug("Loaded coordinates:")
-        self._logger.debug("  L1: %s", L1)
-        self._logger.debug("  R1: %s", R1)
-        self._logger.debug("  L2: %s", L2)
-        self._logger.debug("  R2: %s", R2)
+        # self._logger.debug("  L1: %s", L1)
+        # self._logger.debug("  R1: %s", R1)
+        # self._logger.debug("  L2: %s", L2)
+        # self._logger.debug("  R2: %s", R2)
+        for idx, (l, r) in enumerate(zip(L_h, R_h)):
+            self._logger.debug(" L%s: %s", idx, l)
+            self._logger.debug(" R%s: %s", idx, r)
 
         # Compute vanishing points
-        Vx, Vy, Vx_h, Vx_k, Vy_h, Vy_k = self.compute_vanishing_points(
-            L1h, R1h, L2h, R2h, intermediate_results=True
-        )
+        # Vx, Vy, Vx_h, Vx_k, Vy_h, Vy_k = self.compute_vanishing_points(
+        #     L1h, R1h, L2h, R2h, intermediate_results=True
+        # )
+        # vx_lines hould be L1 R1 and L2 R2
+        vx_lines = np.cross(L_h, R_h)
+        # vy_lines should be L1 L2 and R1 R2
+        vy_lines_left = np.cross(L_h[:-1], L_h[1:])
+        vy_lines_right = np.cross(R_h[:-1], R_h[1:])
+
+        vy_lines = np.vstack((vy_lines_left, vy_lines_right))
+
+        vx_lines = self.normalize_lines(vx_lines)
+        vy_lines = self.normalize_lines(vy_lines)
+
+        Vx, inliers_x = self.ransac_vanishing_point(list(vx_lines), threshold=0.5)
+        Vy, inliers_y = self.ransac_vanishing_point(list(vy_lines), threshold=0.5)
+
         Vx /= Vx[2]
         Vy /= Vy[2]
         self._logger.debug("Computed vanishing points:")
         self._logger.debug("Vx (vanishing point x): %s", Vx)
         self._logger.debug("Vy (vanishing point y): %s", Vy)
         self._logger.debug("Intermediate results:")
-        self._logger.debug("Vx_h (L1-R1 line): %s", Vx_h)
-        self._logger.debug("Vx_k (L2-R2 line): %s", Vx_k)
-        self._logger.debug("Vy_h (L1-L2 line): %s", Vy_h)
-        self._logger.debug("Vy_k (R1-R2 line): %s", Vy_k)
+        for idx, (x, y) in enumerate(zip(inliers_x, inliers_y)):
+            self._logger.debug("Inlier index for Vx: %s, Vy: %s", x, y)
+        
 
         # Compute vanishing line
         l_inf = np.cross(Vx, Vy)
 
-        self._logger.info("K matrix:\n%s", np.array2string(self.K, precision=3, suppress_small=True))
+        self._logger.info(
+            "K matrix:\n%s", np.array2string(self.K, precision=3, suppress_small=True)
+        )
 
         # Backproject vanishing points and line into 3D
         Vy_3D, Vx_3D = self.backproject_point_to_3D_ray(np.stack([Vy, Vx]))
@@ -239,72 +320,80 @@ class MotionAnalysis:
 
         # Plot results if requested
         if plot_result:
-            self._plot_results_2D(L1, R1, L2, R2, Vx, Vy, Vx_h, Vx_k, Vy_h, Vy_k, l_inf)
+            self._plot_results_2D(L_h, R_h, Vx, Vy, vx_lines, vy_lines, l_inf)
             self._plot_results_3D(Vx_3D, Vy_3D, l_inf_3D)
 
     def _plot_results_2D(
         self,
-        L1: np.ndarray,
-        R1: np.ndarray,
-        L2: np.ndarray,
-        R2: np.ndarray,
+        L: np.ndarray,
+        R: np.ndarray,
         Vx: np.ndarray,
         Vy: np.ndarray,
-        Vx_h: np.ndarray,
-        Vx_k: np.ndarray,
-        Vy_h: np.ndarray,
-        Vy_k: np.ndarray,
-        l_inf: np.ndarray,
+        vx_lines: np.ndarray = None,
+        vy_lines: np.ndarray = None,
+        l_inf: np.ndarray = None,
     ) -> None:
         """
-        Helper function to plot 2D results for vanishing points analysis.
-
-        This function visualizes the relationships between points and lines in a 2D space,
-        including vanishing points and their corresponding lines, using matplotlib.
+        Plot 2D results for vanishing points analysis using arrays of L and R.
 
         Args:
-            L1 (np.ndarray): Homogeneous Coordinates of the left point in the first frame (shape: (3,)).
-            R1 (np.ndarray): Homogeneous Coordinates of the right point in the first frame (shape: (3,)).
-            L2 (np.ndarray): Homogeneous Coordinates of the left point in the second frame (shape: (3,)).
-            R2 (np.ndarray): Homogeneous Coordinates of the right point in the second frame (shape: (3,)).
-            Vx (np.ndarray): Homogeneous Coordinates of the vanishing point in the x-direction (shape: (3,)).
-            Vy (np.ndarray): Homogeneous Coordinates of the vanishing point in the y-direction (shape: (3,)).
-            Vx_h (np.ndarray): Homogeneous representation of the line passing through L1 and R1 (shape: (3,)).
-            Vx_k (np.ndarray): Homogeneous representation of the line passing through L2 and R2 (shape: (3,)).
-            Vy_h (np.ndarray): Homogeneous representation of the line passing through L1 and L2 (shape: (3,)).
-            Vy_k (np.ndarray): Homogeneous representation of the line passing through R1 and R2 (shape: (3,)).
-            l_inf (np.ndarray): Homogeneous representation of the line at infinity (shape: (3,)).
-
-        Returns:
-            None: This function does not return any value. It displays a 2D plot.
+            L (np.ndarray): Array of left points (n, 3) in homogeneous coordinates.
+            R (np.ndarray): Array of right points (n, 3) in homogeneous coordinates.
+            Vx (np.ndarray): Homogeneous coordinates of the vanishing point in the x-direction (shape: (3,)).
+            Vy (np.ndarray): Homogeneous coordinates of the vanishing point in the y-direction (shape: (3,)).
+            vx_lines (np.ndarray, optional): Array of lines for Vx (n, 3).
+            vy_lines (np.ndarray, optional): Array of lines for Vy (m, 3).
+            l_inf (np.ndarray, optional): Homogeneous representation of the line at infinity (shape: (3,)).
         """
-        # 2D Plot
         fig, ax = plt.subplots(figsize=(8, 6))
 
-        ax.plot([L1[0], R1[0]], [L1[1], R1[1]], "g-o", label="Frame 1")
-        ax.plot([L2[0], R2[0]], [L2[1], R2[1]], "m-o", label="Frame 2")
+        # Plot all L-R pairs
+        for i in range(L.shape[0]):
+            ax.plot([L[i, 0], R[i, 0]], [L[i, 1], R[i, 1]], "o-", label=f"Pair {i+1}" if i < 2 else None)
+
+        # Plot vanishing points
         ax.plot(Vx[0], Vx[1], "rx", markersize=10, label="Vx")
         ax.plot(Vy[0], Vy[1], "bx", markersize=10, label="Vy")
 
-        x_vals = np.linspace(np.min([Vx[0], Vy[0]]), np.max([Vx[0], Vy[0]]))
+        # Plot lines for Vx (L-R lines)
+        if vx_lines is not None:
+            # Compute x-axis range for plotting lines
+            x_vals = np.linspace(
+                np.min(np.hstack([L[:, 0], R[:, 0], [Vx[0]], [Vy[0]]])),
+                np.max(np.hstack([L[:, 0], R[:, 0], [Vx[0]], [Vy[0]]])),
+                500,
+            )
+            for i, line in enumerate(vx_lines):
+                if np.abs(line[1]) > 1e-6:
+                    y_vals = -(line[0] * x_vals + line[2]) / line[1]
+                    ax.plot(x_vals, y_vals, "g--", alpha=0.5, label="vx_lines" if i == 0 else None)
 
-        y_vals_l_inf = -(l_inf[0] * x_vals + l_inf[2]) / l_inf[1]
-        y_vals_Vx_h = -(Vx_h[0] * x_vals + Vx_h[2]) / Vx_h[1]
-        y_vals_Vx_k = -(Vx_k[0] * x_vals + Vx_k[2]) / Vx_k[1]
-        y_vals_Vy_h = -(Vy_h[0] * x_vals + Vy_h[2]) / Vy_h[1]
-        y_vals_Vy_k = -(Vy_k[0] * x_vals + Vy_k[2]) / Vy_k[1]
+        # Plot lines for Vy (L-L and R-R lines)
+        if vy_lines is not None:
+            x_vals = np.linspace(
+                np.min(np.hstack([L[:, 0], R[:, 0], [Vx[0]], [Vy[0]]])),
+                np.max(np.hstack([L[:, 0], R[:, 0], [Vx[0]], [Vy[0]]])),
+                500,
+            )
+            for i, line in enumerate(vy_lines):
+                if np.abs(line[1]) > 1e-6:
+                    y_vals = -(line[0] * x_vals + line[2]) / line[1]
+                    ax.plot(x_vals, y_vals, "b--", alpha=0.5, label="vy_lines" if i == 0 else None)
 
-        ax.plot(x_vals, y_vals_Vx_h, "g--", label="Vx_h (L1-R1)")
-        ax.plot(x_vals, y_vals_Vx_k, "m--", label="Vx_k (L2-R2)")
-        ax.plot(x_vals, y_vals_Vy_h, "b--", label="Vy_h (L1-L2)")
-        ax.plot(x_vals, y_vals_Vy_k, "b--", label="Vy_k (R1-R2)")
-        ax.plot(x_vals, y_vals_l_inf, "r-", label="l_inf")
+        # Plot line at infinity if provided
+        if l_inf is not None and np.abs(l_inf[1]) > 1e-6:
+            x_vals = np.linspace(
+                np.min(np.hstack([L[:, 0], R[:, 0], [Vx[0]], [Vy[0]]])),
+                np.max(np.hstack([L[:, 0], R[:, 0], [Vx[0]], [Vy[0]]])),
+                500,
+            )
+            y_vals_l_inf = -(l_inf[0] * x_vals + l_inf[2]) / l_inf[1]
+            ax.plot(x_vals, y_vals_l_inf, "r-", label="l_inf")
 
         ax.set_title("Vanishing Points Analysis")
         ax.set_xlabel("X (pixels)")
         ax.set_ylabel("Y (pixels)")
         ax.legend()
-
         plt.grid()
         plt.show()
 
@@ -312,62 +401,50 @@ class MotionAnalysis:
         self, Vx: np.ndarray, Vy: np.ndarray, l_inf: np.ndarray
     ) -> None:
         """
-        Helper function to plot 3D vectors and visualize their relationships.
-
-        This function creates a 3D plot to visualize the input vectors `Vx`, `Vy`,
-        and `l_inf` in a 3D space. It normalizes `l_inf` for better visualization
-        and sets appropriate plot limits to ensure all vectors are displayed clearly.
+        Helper function to plot 3D vectors and visualize their relationships,
+        including the XY image plane for better spatial understanding.
 
         Args:
-            Vx (np.ndarray): A 3-element numpy array representing the first 3D vector.
-            Vy (np.ndarray): A 3-element numpy array representing the second 3D vector.
-            l_inf (np.ndarray): A 3-element numpy array representing the third 3D vector
-                to be normalized and visualized.
-
-        Returns:
-            None: This function does not return any value. It displays a 3D plot.
+            Vx (np.ndarray): 3D vector (vanishing point X, backprojected).
+            Vy (np.ndarray): 3D vector (vanishing point Y, backprojected).
+            l_inf (np.ndarray): 3D vector (vanishing line, backprojected).
         """
-        # 3D Plot
         fig_3d = plt.figure(figsize=(8, 8))
         ax_3d = fig_3d.add_subplot(111, projection="3d")
 
-        # Plot Vx_3D and Vy_3D
-        # ax_3d.quiver(
-        #     0, 0, 0, Vx_3D[0], Vx_3D[1], Vx_3D[2], color="r", label="Vx_3D", linewidth=2
-        # )
-        # ax_3d.quiver(
-        #     0, 0, 0, Vy_3D[0], Vy_3D[1], Vy_3D[2], color="b", label="Vy_3D", linewidth=2
-        # )
+        # Normalize l_inf for visualization
+        l_inf_norm = l_inf / np.linalg.norm(l_inf)
 
-        # Backproject l_inf into 3D
-        l_inf_norm = l_inf / np.linalg.norm(l_inf)  # Normalize for visualization
+        # Plot 3D vectors
+        ax_3d.quiver(0, 0, 0, Vx[0], Vx[1], Vx[2], color="r", label="Vx_3D")
+        ax_3d.quiver(0, 0, 0, Vy[0], Vy[1], Vy[2], color="b", label="Vy_3D")
+        ax_3d.quiver(
+            0, 0, 0, l_inf_norm[0], l_inf_norm[1], l_inf_norm[2], color="g", label="l_inf_3D"
+        )
 
-        # Set plot limits for better visualization
-        max_range = max(np.abs(Vx).max(), np.abs(Vy).max(), np.abs(l_inf_norm).max())
+        # Plot the XY image plane (z=0)
+        plane_size = max(
+            np.abs(Vx).max(), np.abs(Vy).max(), np.abs(l_inf_norm).max(), 1
+        )
+        xx, yy = np.meshgrid(
+            np.linspace(-plane_size, plane_size, 10),
+            np.linspace(-plane_size, plane_size, 10)
+        )
+        zz = np.zeros_like(xx)
+        ax_3d.plot_surface(
+            xx, yy, zz, alpha=0.2, color="gray", label="Image Plane (z=0)"
+        )
+
+        # Set plot limits
+        max_range = plane_size
         ax_3d.set_xlim([-max_range, max_range])
         ax_3d.set_ylim([-max_range, max_range])
         ax_3d.set_zlim([-max_range, max_range])
 
-        # Add labels and legend
         ax_3d.set_xlabel("X")
         ax_3d.set_ylabel("Y")
         ax_3d.set_zlabel("Z")
-        ax_3d.set_title("3D Visualization of Vx_3D, Vy_3D, and l_inf_3D")
-
-        # Plot 3D features
-        ax_3d.quiver(0, 0, 0, Vx[0], Vx[1], Vx[2], color="r", label="Vx_3D")
-        ax_3d.quiver(0, 0, 0, Vy[0], Vy[1], Vy[2], color="b", label="Vy_3D")
-        ax_3d.quiver(
-            0,
-            0,
-            0,
-            l_inf_norm[0],
-            l_inf_norm[1],
-            l_inf_norm[2],
-            color="g",
-            label="l_inf_3D",
-        )
-        ax_3d.set_title("3D Visualization")
+        ax_3d.set_title("3D Visualization of Vx_3D, Vy_3D, l_inf_3D, and Image Plane")
         ax_3d.legend()
         plt.show()
 
@@ -421,7 +498,8 @@ class MotionAnalysis:
         self._logger.info("Calculating camera to plane distance...")
         # Initialize left and right rear light coordinates
         coordinates = np.load(self.selected_points_file)
-        L1, R1, L2, R2 = coordinates
+        L1, R1 = coordinates[0]
+        L2, R2 = coordinates[-1]
 
         # Make the coorindates homogeneous
         L1 = np.array([L1[0], L1[1], 1])
@@ -445,7 +523,10 @@ class MotionAnalysis:
         elif self.tracked_features == "license_plate":
             # License plate position and parameters are uniform in Italy
             feature_distance = 520 / 1e3
-        self._logger.debug("Calculating real life distance between adjacent features: %.2f m", feature_distance)
+        self._logger.debug(
+            "Calculating real life distance between adjacent features: %.2f m",
+            feature_distance,
+        )
 
         # Backproject into 3D space
         L1_3D, R1_3D = self.backproject_point_to_3D_ray(np.stack([L1, R1]))
@@ -477,7 +558,8 @@ class MotionAnalysis:
         self, ray1: np.ndarray, ray2: np.ndarray, scale: float
     ) -> None:
         """
-        Plot the triangle formed by the camera and two scaled rays using the law of cosines.
+        Plot the triangle formed by the camera and two scaled rays using the law of cosines,
+        and visualize the XY plane for spatial reference.
 
         Args:
             ray1: np.array, direction vector to left light (unit)
@@ -516,6 +598,17 @@ class MotionAnalysis:
             [P1[2], P2[2]],
             "r--",
             label="d (real distance)",
+        )
+
+        # Plot the XY plane (z=0)
+        max_range = np.max(np.abs([P1, P2, origin])) * 1.2
+        xx, yy = np.meshgrid(
+            np.linspace(-max_range, max_range, 10),
+            np.linspace(-max_range, max_range, 10)
+        )
+        zz = np.zeros_like(xx)
+        ax.plot_surface(
+            xx, yy, zz, alpha=0.15, color="gray", label="XY Plane"
         )
 
         # Style
