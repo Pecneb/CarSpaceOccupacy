@@ -2,6 +2,8 @@ import cv2
 import numpy as np
 import fire
 import os
+from typing import Optional
+from pathlib import Path
 
 
 # --- Step 1: Define the main function ---
@@ -10,9 +12,33 @@ def track_lights(
     output_path: str = "data/tracks/tracked_rear_lights.npy",
     display: bool = True,
     start_frame: int = 0,
+    calibration_data_path: Optional[str] = None,
 ):
+    # --- Load calibartion matrices if give ---
+    if calibration_data_path:
+        calibration_data = Path(calibration_data_path)
+        if not calibration_data.exists():
+            raise FileNotFoundError(
+                f"Given source file path for calibration matrices was not found: {calibration_data}"
+            )
+        calibration_matrices = np.load(str(calibration_data))
+        camera_matrix = calibration_matrices["camera_matrix"]
+        dist_coeffs = calibration_matrices["dist_coeffs"]
+        print("Camera Matrix:\n", camera_matrix)
+        print("Distortion Coefficients:\n", dist_coeffs)
+
     # --- Load video ---
     cap = cv2.VideoCapture(video_path)
+
+    if calibration_data_path:
+        w, h = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH)), int(
+            cap.get(cv2.CAP_PROP_FRAME_HEIGHT)
+        )
+
+        # Get new camera matrix
+        newcameramtx, rio = cv2.getOptimalNewCameraMatrix(
+            camera_matrix, dist_coeffs, (w, h), 1, (w, h)
+        )
 
     if not cap.isOpened():
         print("Error: Cannot open video.")
@@ -25,6 +51,12 @@ def track_lights(
     if not ret:
         print("Error: Cannot read first frame.")
         return
+
+    # Undistort the frame
+    if calibration_data_path:
+        first_frame = cv2.undistort(
+            first_frame, camera_matrix, dist_coeffs, None, newcameramtx
+        )
 
     # --- Manually select two points ---
     selected_points = []
@@ -80,6 +112,10 @@ def track_lights(
         ret, frame = cap.read()
         if not ret:
             break
+        if calibration_data_path:
+            frame = cv2.undistort(
+                frame, camera_matrix, dist_coeffs, None, newcameramtx
+            )
 
         next_pts, status, _ = cv2.calcOpticalFlowPyrLK(
             first_frame, frame, prev_pts, None, **lk_params
